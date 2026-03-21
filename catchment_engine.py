@@ -18,12 +18,144 @@ PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 
 DEFAULT_DYAD_LEDGER = PROCESSED_DIR / "clinical_dyad_ledger.csv"
 DEFAULT_PATIENT_DENSITY = PROCESSED_DIR / "medicare_patient_density.csv"
+DEFAULT_COMPETITOR_TRIALS = PROCESSED_DIR / "competitor_neuromodulation_trials.csv"
+DEFAULT_TRIAL_PENALTY = 1250.0
+ACTIVE_COMPETITOR_STATUSES = {
+    "recruiting",
+    "active, not recruiting",
+    "not yet recruiting",
+    "enrolling by invitation",
+}
+
+MOCK_COMPETITOR_TRIALS = [
+    {
+        "Trial_ID": "COMP-001",
+        "City": "Los Angeles",
+        "State": "CA",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor A",
+        "Therapy_Area": "TRD",
+    },
+    {
+        "Trial_ID": "COMP-002",
+        "City": "Los Angeles",
+        "State": "CA",
+        "Overall_Status": "Active, not recruiting",
+        "Sponsor": "Competitor B",
+        "Therapy_Area": "OCD",
+    },
+    {
+        "Trial_ID": "COMP-003",
+        "City": "Los Angeles",
+        "State": "CA",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor C",
+        "Therapy_Area": "TRD",
+    },
+    {
+        "Trial_ID": "COMP-004",
+        "City": "Philadelphia",
+        "State": "PA",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor A",
+        "Therapy_Area": "TRD",
+    },
+    {
+        "Trial_ID": "COMP-005",
+        "City": "Philadelphia",
+        "State": "PA",
+        "Overall_Status": "Not yet recruiting",
+        "Sponsor": "Competitor D",
+        "Therapy_Area": "Mood Disorders",
+    },
+    {
+        "Trial_ID": "COMP-006",
+        "City": "New York",
+        "State": "NY",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor B",
+        "Therapy_Area": "TRD",
+    },
+    {
+        "Trial_ID": "COMP-007",
+        "City": "New York",
+        "State": "NY",
+        "Overall_Status": "Active, not recruiting",
+        "Sponsor": "Competitor C",
+        "Therapy_Area": "OCD",
+    },
+    {
+        "Trial_ID": "COMP-008",
+        "City": "Stanford",
+        "State": "CA",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor E",
+        "Therapy_Area": "Depression",
+    },
+    {
+        "Trial_ID": "COMP-009",
+        "City": "Cleveland",
+        "State": "OH",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor B",
+        "Therapy_Area": "Depression",
+    },
+    {
+        "Trial_ID": "COMP-010",
+        "City": "Pittsburgh",
+        "State": "PA",
+        "Overall_Status": "Active, not recruiting",
+        "Sponsor": "Competitor F",
+        "Therapy_Area": "Mood Disorders",
+    },
+    {
+        "Trial_ID": "COMP-011",
+        "City": "San Francisco",
+        "State": "CA",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor A",
+        "Therapy_Area": "TRD",
+    },
+    {
+        "Trial_ID": "COMP-012",
+        "City": "Boston",
+        "State": "MA",
+        "Overall_Status": "Active, not recruiting",
+        "Sponsor": "Competitor C",
+        "Therapy_Area": "OCD",
+    },
+    {
+        "Trial_ID": "COMP-013",
+        "City": "Saint Louis",
+        "State": "MO",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor G",
+        "Therapy_Area": "Depression",
+    },
+    {
+        "Trial_ID": "COMP-014",
+        "City": "Chapel Hill",
+        "State": "NC",
+        "Overall_Status": "Recruiting",
+        "Sponsor": "Competitor D",
+        "Therapy_Area": "TRD",
+    },
+    {
+        "Trial_ID": "COMP-015",
+        "City": "Kansas City",
+        "State": "MO",
+        "Overall_Status": "Not yet recruiting",
+        "Sponsor": "Competitor H",
+        "Therapy_Area": "Depression",
+    },
+]
 
 
 @dataclass(frozen=True)
 class SourcePaths:
     dyad_ledger: Path
     patient_density: Path
+    competitor_trials: Path
     output_dir: Path
 
 
@@ -46,6 +178,16 @@ def parse_args() -> argparse.Namespace:
         "--patient-density",
         type=Path,
         default=DEFAULT_PATIENT_DENSITY,
+    )
+    parser.add_argument(
+        "--competitor-trials",
+        type=Path,
+        default=DEFAULT_COMPETITOR_TRIALS,
+    )
+    parser.add_argument(
+        "--trial-penalty-per-active-trial",
+        type=float,
+        default=DEFAULT_TRIAL_PENALTY,
     )
     parser.add_argument("--output-dir", type=Path, default=PROCESSED_DIR)
     parser.add_argument("--verbose", action="store_true")
@@ -80,6 +222,15 @@ def normalize_text_expr(expr: pl.Expr) -> pl.Expr:
         .str.strip_chars()
         .str.to_uppercase()
     )
+
+
+def ensure_competitor_trials_source(path: Path) -> Path:
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(MOCK_COMPETITOR_TRIALS).write_csv(path)
+    LOGGER.info("Wrote mock competitor trial file to %s", path)
+    return path
 
 
 def resolve_density_columns(frame: pl.LazyFrame) -> dict[str, str]:
@@ -201,16 +352,57 @@ def load_patient_density(path: Path) -> pl.LazyFrame:
     )
 
 
+def load_competitor_trials(path: Path) -> pl.LazyFrame:
+    source_path = ensure_competitor_trials_source(path)
+    frame = scan_csv(source_path)
+    ensure_columns(
+        frame,
+        {"Trial_ID", "City", "State", "Overall_Status"},
+        "competitor trial source",
+    )
+
+    return (
+        frame.select(
+            pl.col("Trial_ID").cast(pl.Utf8, strict=False).alias("Trial_ID"),
+            pl.col("City").cast(pl.Utf8, strict=False).alias("City"),
+            pl.col("State").cast(pl.Utf8, strict=False).alias("State"),
+            pl.col("Overall_Status")
+            .cast(pl.Utf8, strict=False)
+            .str.to_lowercase()
+            .fill_null("")
+            .alias("Overall_Status"),
+        )
+        .filter(pl.col("Overall_Status").is_in(sorted(ACTIVE_COMPETITOR_STATUSES)))
+        .with_columns(
+            normalize_text_expr(pl.col("City")).alias("surgeon_city_key"),
+            normalize_text_expr(pl.col("State")).alias("surgeon_state_key"),
+        )
+        .group_by("surgeon_state_key", "surgeon_city_key")
+        .agg(
+            pl.len().alias("Active_Competitor_Trials"),
+            pl.col("Trial_ID").n_unique().alias("Unique_Competitor_Trials"),
+        )
+    )
+
+
 def build_catchment_ledger(
     dyad_ledger_path: Path,
     patient_density_path: Path,
+    competitor_trials_path: Path,
+    trial_penalty_per_active_trial: float,
 ) -> pl.DataFrame:
     viable_dyads = load_viable_dyad_sites(dyad_ledger_path)
     patient_density = load_patient_density(patient_density_path)
+    competitor_trials = load_competitor_trials(competitor_trials_path)
 
     return (
         viable_dyads.join(
             patient_density,
+            on=["surgeon_state_key", "surgeon_city_key"],
+            how="left",
+        )
+        .join(
+            competitor_trials,
             on=["surgeon_state_key", "surgeon_city_key"],
             how="left",
         )
@@ -224,10 +416,27 @@ def build_catchment_ledger(
             pl.col("Parkinsons_Count").fill_null(0.0),
             pl.col("Epilepsy_Count").fill_null(0.0),
             pl.col("Circuit_Level_TAM").fill_null(0.0),
+            pl.col("Active_Competitor_Trials").fill_null(0),
+            pl.col("Unique_Competitor_Trials").fill_null(0),
             pl.col("State").fill_null(pl.col("Surgeon_State")),
             pl.col("Location").fill_null(pl.col("Surgeon_City")),
         )
-        .sort("Circuit_Level_TAM", descending=True)
+        .with_columns(
+            (
+                pl.col("Active_Competitor_Trials") * trial_penalty_per_active_trial
+            )
+            .round(2)
+            .alias("Trial_Cannibalization_Penalty"),
+        )
+        .with_columns(
+            (
+                pl.col("Circuit_Level_TAM") - pl.col("Trial_Cannibalization_Penalty")
+            )
+            .clip(lower_bound=0.0)
+            .round(2)
+            .alias("Net_Sourcing_Alpha")
+        )
+        .sort("Net_Sourcing_Alpha", descending=True)
         .select(
             "Surgeon_Name",
             "Surgeon_Volume",
@@ -240,6 +449,10 @@ def build_catchment_ledger(
             "Parkinsons_Count",
             "Epilepsy_Count",
             "Circuit_Level_TAM",
+            "Active_Competitor_Trials",
+            "Unique_Competitor_Trials",
+            "Trial_Cannibalization_Penalty",
+            "Net_Sourcing_Alpha",
             "Catchment_Match_Status",
         )
         .collect()
@@ -249,44 +462,46 @@ def build_catchment_ledger(
 def create_catchment_chart(catchment_df: pl.DataFrame, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ranked = catchment_df.sort("Circuit_Level_TAM").tail(14)
+    ranked = catchment_df.sort("Net_Sourcing_Alpha").tail(14)
     labels = [
-        f"{surgeon} + {partner} | {city}, {state}"
-        for surgeon, partner, city, state in zip(
+        f"{surgeon} + {partner} | {city}, {state} ({int(trials)} active trials)"
+        for surgeon, partner, city, state, trials in zip(
             ranked["Surgeon_Name"].to_list(),
             ranked["Dyad_Partner_Name"].to_list(),
             ranked["Surgeon_City"].to_list(),
             ranked["Surgeon_State"].to_list(),
+            ranked["Active_Competitor_Trials"].to_list(),
             strict=False,
         )
     ]
-    tam_values = ranked["Circuit_Level_TAM"].to_list()
+    alpha_values = ranked["Net_Sourcing_Alpha"].to_list()
+    penalty_values = ranked["Trial_Cannibalization_Penalty"].to_list()
 
     fig, ax = plt.subplots(figsize=(18, 10), facecolor="#1e1e1e")
     ax.set_facecolor("#1e1e1e")
 
-    vmax = max(tam_values) if tam_values else 1.0
-    vmin = min(tam_values) if tam_values else 0.0
+    vmax = max(alpha_values) if alpha_values else 1.0
+    vmin = min(alpha_values) if alpha_values else 0.0
     if vmax == vmin:
         vmax = vmin + 1.0
     norm = colors.Normalize(vmin=vmin, vmax=vmax)
-    cmap = plt.colormaps["magma"]
-    bar_colors = [cmap(norm(value)) for value in tam_values]
+    cmap = plt.colormaps["plasma"]
+    bar_colors = [cmap(norm(value)) for value in alpha_values]
 
     bars = ax.barh(
         labels,
-        tam_values,
+        alpha_values,
         color=bar_colors,
         edgecolor=bar_colors,
         linewidth=1.0,
         alpha=0.98,
     )
 
-    for bar, value in zip(bars, tam_values, strict=False):
+    for bar, value, penalty in zip(bars, alpha_values, penalty_values, strict=False):
         ax.text(
             value + (vmax * 0.01),
             bar.get_y() + bar.get_height() / 2,
-            f"{value:,.0f}",
+            f"{value:,.0f} | penalty {penalty:,.0f}",
             va="center",
             ha="left",
             fontsize=10,
@@ -296,20 +511,20 @@ def create_catchment_chart(catchment_df: pl.DataFrame, output_path: Path) -> Non
     scalar_mappable = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     scalar_mappable.set_array([])
     colorbar = fig.colorbar(scalar_mappable, ax=ax, pad=0.02)
-    colorbar.set_label("Circuit-Level TAM", color="#d4d4d4")
+    colorbar.set_label("Net Sourcing Alpha", color="#d4d4d4")
     colorbar.ax.yaxis.set_tick_params(color="#d4d4d4")
     plt.setp(colorbar.ax.get_yticklabels(), color="#d4d4d4")
     colorbar.outline.set_edgecolor("#666666")
 
     ax.set_title(
-        "Viable Clinical Dyad Hubs by Circuit-Level TAM",
+        "Viable Clinical Dyad Hubs by Net Sourcing Alpha",
         loc="left",
         fontsize=18,
         color="#f5f5f5",
         pad=18,
         fontweight="bold",
     )
-    ax.set_xlabel("Circuit-Level TAM", color="#d4d4d4", fontsize=11)
+    ax.set_xlabel("Net Sourcing Alpha", color="#d4d4d4", fontsize=11)
     ax.set_ylabel("")
     ax.tick_params(axis="x", colors="#d4d4d4", labelsize=10)
     ax.tick_params(axis="y", colors="#f5f5f5", labelsize=9)
@@ -323,7 +538,7 @@ def create_catchment_chart(catchment_df: pl.DataFrame, output_path: Path) -> Non
     fig.text(
         0.01,
         0.015,
-        "Depression is weighted at 15% to proxy the treatment-resistant subset rather than the full prevalence pool.",
+        "Alpha = Circuit-Level TAM minus a fixed penalty per active competitor trial in the same city. Depression remains weighted at 15% to proxy the treatment-resistant subset.",
         color="#cfcfcf",
         fontsize=9,
     )
@@ -349,11 +564,14 @@ def main() -> None:
     source_paths = SourcePaths(
         dyad_ledger=args.dyad_ledger,
         patient_density=args.patient_density,
+        competitor_trials=args.competitor_trials,
         output_dir=args.output_dir,
     )
     catchment_df = build_catchment_ledger(
         dyad_ledger_path=source_paths.dyad_ledger,
         patient_density_path=source_paths.patient_density,
+        competitor_trials_path=source_paths.competitor_trials,
+        trial_penalty_per_active_trial=args.trial_penalty_per_active_trial,
     )
     outputs = write_outputs(catchment_df, source_paths.output_dir)
     LOGGER.info("Catchment engine complete. Generated %s viable hubs.", len(catchment_df))

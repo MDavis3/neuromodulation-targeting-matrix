@@ -6,19 +6,17 @@ from pathlib import Path
 import polars as pl
 
 
-# High-acuity referring specialists for circuit-level therapeutics typically
-# surface through TMS, ECT, or advanced EEG-related billing activity.
-ADVANCED_INTERVENTION_CPT_CODES = {
+# The psychiatric referral funnel should be restricted to physicians who
+# demonstrably treat refractory depression rather than general mental-health or
+# diagnostic neurology volume. TMS and ECT billing are used here as an
+# operational proof point for interventional psychiatry capacity.
+INTERVENTIONAL_PSYCHIATRY_CPT_CODES = {
     "90867",  # TMS initial mapping and treatment
     "90868",  # TMS subsequent delivery
-    "90869",  # TMS motor threshold redetermination
     "90870",  # ECT
-    "95951",  # prolonged EEG monitoring with video
-    "95953",  # ambulatory EEG monitoring
-    "95956",  # EEG monitoring by technologist
 }
 
-TARGET_SPECIALTY_PATTERN = r"psychiatry|neurology"
+TARGET_SPECIALTY_PATTERN = r"psychiatry"
 
 
 @dataclass(frozen=True)
@@ -71,11 +69,12 @@ def build_referring_specialist_funnel(
     schema: MedicareSchema = MedicareSchema(),
     min_intervention_volume: int = 10,
 ) -> pl.LazyFrame:
-    """Build a physician-level referral funnel for Psychiatry/Neurology.
+    """Build a physician-level referral funnel for interventional Psychiatry.
 
-    The funnel isolates physicians billing for advanced interventions that are
-    more likely to feed refractory psychiatric or complex neurology patients
-    into an experimental neuromodulation trial.
+    The funnel isolates psychiatrists billing for TMS or ECT because those
+    physicians are materially more likely to manage treatment-resistant
+    depression and therefore represent a credible referral channel for
+    psychiatric neuromodulation trials.
     """
 
     medicare = pl.scan_csv(medicare_path, infer_schema_length=10_000)
@@ -108,7 +107,7 @@ def build_referring_specialist_funnel(
             .str.to_lowercase()
             .str.contains(TARGET_SPECIALTY_PATTERN)
         )
-        .filter(pl.col("target_cpt_code").is_in(ADVANCED_INTERVENTION_CPT_CODES))
+        .filter(pl.col("target_cpt_code").is_in(INTERVENTIONAL_PSYCHIATRY_CPT_CODES))
         .group_by(
             [
                 "dyad_partner_npi",

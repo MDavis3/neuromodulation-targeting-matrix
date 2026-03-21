@@ -696,6 +696,25 @@ def main() -> None:
     )
     ledger = build_launch_priority_ledger(source_paths)
     outputs = write_outputs(ledger, source_paths.output_dir, top_n=args.top_n)
+    try:
+        from launch_packet_renderer import PacketPaths, render_launch_packet
+
+        packet_outputs = render_launch_packet(
+            PacketPaths(
+                summary=outputs[2],
+                briefs_dir=outputs[3],
+                ledger=outputs[0],
+                launch_chart=outputs[1],
+                drg_chart=PROCESSED_DIR / "drg_economics_visual.png",
+                output_pdf=source_paths.output_dir / "executive_launch_packet.pdf",
+                output_email=source_paths.output_dir / "launch_packet_email.txt",
+                output_manifest=source_paths.output_dir / "attachment_manifest.txt",
+            ),
+            top_n=args.top_n,
+        )
+        LOGGER.info("Presentation outputs: %s", packet_outputs)
+    except Exception as exc:
+        LOGGER.warning("Packet render skipped: %s", exc)
     LOGGER.info("Launch package complete. Generated %s ranked sites.", len(ledger))
     LOGGER.info("Outputs: %s", outputs)
 

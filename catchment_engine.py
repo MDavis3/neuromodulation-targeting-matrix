@@ -26,6 +26,59 @@ ACTIVE_COMPETITOR_STATUSES = {
     "not yet recruiting",
     "enrolling by invitation",
 }
+US_STATE_NAME_TO_ABBR = {
+    "ALABAMA": "AL",
+    "ALASKA": "AK",
+    "ARIZONA": "AZ",
+    "ARKANSAS": "AR",
+    "CALIFORNIA": "CA",
+    "COLORADO": "CO",
+    "CONNECTICUT": "CT",
+    "DELAWARE": "DE",
+    "DISTRICT OF COLUMBIA": "DC",
+    "FLORIDA": "FL",
+    "GEORGIA": "GA",
+    "HAWAII": "HI",
+    "IDAHO": "ID",
+    "ILLINOIS": "IL",
+    "INDIANA": "IN",
+    "IOWA": "IA",
+    "KANSAS": "KS",
+    "KENTUCKY": "KY",
+    "LOUISIANA": "LA",
+    "MAINE": "ME",
+    "MARYLAND": "MD",
+    "MASSACHUSETTS": "MA",
+    "MICHIGAN": "MI",
+    "MINNESOTA": "MN",
+    "MISSISSIPPI": "MS",
+    "MISSOURI": "MO",
+    "MONTANA": "MT",
+    "NEBRASKA": "NE",
+    "NEVADA": "NV",
+    "NEW HAMPSHIRE": "NH",
+    "NEW JERSEY": "NJ",
+    "NEW MEXICO": "NM",
+    "NEW YORK": "NY",
+    "NORTH CAROLINA": "NC",
+    "NORTH DAKOTA": "ND",
+    "OHIO": "OH",
+    "OKLAHOMA": "OK",
+    "OREGON": "OR",
+    "PENNSYLVANIA": "PA",
+    "RHODE ISLAND": "RI",
+    "SOUTH CAROLINA": "SC",
+    "SOUTH DAKOTA": "SD",
+    "TENNESSEE": "TN",
+    "TEXAS": "TX",
+    "UTAH": "UT",
+    "VERMONT": "VT",
+    "VIRGINIA": "VA",
+    "WASHINGTON": "WA",
+    "WEST VIRGINIA": "WV",
+    "WISCONSIN": "WI",
+    "WYOMING": "WY",
+}
 
 MOCK_COMPETITOR_TRIALS = [
     {
@@ -224,6 +277,13 @@ def normalize_text_expr(expr: pl.Expr) -> pl.Expr:
     )
 
 
+def normalize_state_expr(expr: pl.Expr) -> pl.Expr:
+    return normalize_text_expr(expr).map_elements(
+        lambda value: US_STATE_NAME_TO_ABBR.get(value, value),
+        return_dtype=pl.Utf8,
+    )
+
+
 def ensure_competitor_trials_source(path: Path) -> Path:
     if path.exists():
         return path
@@ -294,7 +354,7 @@ def load_viable_dyad_sites(path: Path) -> pl.LazyFrame:
         .filter(pl.col("Trial_Site_Friction_Flag") != "High Friction Trial Site")
         .with_columns(
             normalize_text_expr(pl.col("Surgeon_City")).alias("surgeon_city_key"),
-            normalize_text_expr(pl.col("Surgeon_State")).alias("surgeon_state_key"),
+            normalize_state_expr(pl.col("Surgeon_State")).alias("surgeon_state_key"),
         )
     )
 
@@ -325,7 +385,7 @@ def load_patient_density(path: Path) -> pl.LazyFrame:
             .alias("Epilepsy_Count"),
         )
         .with_columns(
-            normalize_text_expr(pl.col("State")).alias("surgeon_state_key"),
+            normalize_state_expr(pl.col("State")).alias("surgeon_state_key"),
             normalize_text_expr(pl.col("Location")).alias("surgeon_city_key"),
             # Only a fraction of depression prevalence is likely to meet a
             # treatment-resistant threshold. The 0.15 multiplier approximates
@@ -375,7 +435,7 @@ def load_competitor_trials(path: Path) -> pl.LazyFrame:
         .filter(pl.col("Overall_Status").is_in(sorted(ACTIVE_COMPETITOR_STATUSES)))
         .with_columns(
             normalize_text_expr(pl.col("City")).alias("surgeon_city_key"),
-            normalize_text_expr(pl.col("State")).alias("surgeon_state_key"),
+            normalize_state_expr(pl.col("State")).alias("surgeon_state_key"),
         )
         .group_by("surgeon_state_key", "surgeon_city_key")
         .agg(

@@ -23,6 +23,11 @@ from typing import Iterable
 
 import matplotlib.pyplot as plt
 import polars as pl
+from clinical_dyad_ledger import (
+    MedicareSchema,
+    SurgeonSchema,
+    build_clinical_dyad_ledger,
+)
 
 
 LOGGER = logging.getLogger("neuromodulation_targeting_matrix.sourcing_engine")
@@ -166,6 +171,7 @@ def parse_args() -> argparse.Namespace:
         default=PROCESSED_DIR,
     )
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
+    parser.add_argument("--dyad-min-intervention-volume", type=int, default=10)
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
@@ -981,13 +987,12 @@ def process_aact(
 
     official_matches = (
         pl.concat([strict_matches, loose_matches])
-        .group_by("nct_id", "official_name")
-        .agg(
-            pl.col("npi")
-            .sort_by(["key_rank", "total_surgical_volume"], descending=[True, True])
-            .first()
-            .alias("npi")
+        .sort(
+            by=["nct_id", "official_name", "key_rank", "total_surgical_volume"],
+            descending=[False, False, True, True],
         )
+        .unique(subset=["nct_id", "official_name"], keep="first", maintain_order=True)
+        .select("nct_id", "official_name", "npi", "affiliation")
     )
 
     return (
@@ -1013,6 +1018,10 @@ def process_aact(
             .sum()
             .alias("terminated_low_recruitment_trials"),
             pl.col("facility_count").max().alias("max_facility_count"),
+            pl.col("affiliation")
+            .filter(pl.col("affiliation").str.strip_chars() != "")
+            .first()
+            .alias("hospital_affiliation"),
         )
         .with_columns(
             (
@@ -1044,6 +1053,7 @@ def build_master_ledger(
             pl.col("terminated_low_recruitment_trials").fill_null(0),
             pl.col("max_facility_count").fill_null(0),
             pl.col("has_successful_device_trial_infrastructure").fill_null(False),
+            pl.col("hospital_affiliation").fill_null(""),
             pl.col("competitor_consulting_dollars").fill_null(0.0),
             pl.col("competitor_payment_events").fill_null(0),
             pl.col("competitor_payment_years").fill_null(0),
@@ -1159,6 +1169,7 @@ def select_top_targets(scored_ledger: pl.LazyFrame, top_n: int) -> pl.DataFrame:
             "provider_name",
             "provider_state",
             "provider_city",
+            "hospital_affiliation",
             "total_surgical_volume",
             "implant_lead_volume",
             "ipg_volume",
@@ -1261,25 +1272,30 @@ def create_bloomberg_chart(targets: pl.DataFrame, output_path: Path) -> None:
 def write_outputs(
     scored_ledger: pl.LazyFrame,
     top_targets: pl.DataFrame,
+    dyad_ledger: pl.DataFrame,
     output_dir: Path,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     full_ledger_path = output_dir / "clinical_sourcing_ledger.parquet"
     top_csv_path = output_dir / "clinical_top_targets.csv"
     chart_path = output_dir / "clinical_top_targets.png"
+    dyad_csv_path = output_dir / "clinical_dyad_ledger.csv"
     scored_ledger.collect().write_parquet(full_ledger_path)
     top_targets.write_csv(top_csv_path)
+    dyad_ledger.write_csv(dyad_csv_path)
     LOGGER.info("Wrote full ledger to %s", full_ledger_path)
     LOGGER.info("Wrote top-target CSV to %s", top_csv_path)
+    LOGGER.info("Wrote clinical dyad CSV to %s", dyad_csv_path)
     create_bloomberg_chart(top_targets, chart_path)
-    return full_ledger_path, top_csv_path, chart_path
+    return full_ledger_path, top_csv_path, chart_path, dyad_csv_path
 
 
 def run_pipeline(
     source_paths: SourcePaths,
     top_n: int,
     weights: ScoringWeights,
-) -> tuple[pl.DataFrame, tuple[Path, Path, Path]]:
+    dyad_min_intervention_volume: int,
+) -> tuple[pl.DataFrame, pl.DataFrame, tuple[Path, Path, Path, Path]]:
     source_paths.output_dir.mkdir(parents=True, exist_ok=True)
     medicare = process_medicare_volume(source_paths.medicare)
     provider_aliases = build_provider_aliases(medicare)
@@ -1303,20 +1319,45 @@ def run_pipeline(
     implanting_ledger = filter_implanting_neurosurgeons(ledger)
     scored = score_ledger(implanting_ledger, weights=weights)
     top_targets = select_top_targets(scored, top_n)
-    outputs = write_outputs(scored, top_targets, source_paths.output_dir)
-    return top_targets, outputs
+    dyad_ledger = build_clinical_dyad_ledger(
+        surgeons_df=top_targets,
+        medicare_path=source_paths.medicare,
+        surgeon_schema=SurgeonSchema(
+            name="provider_name",
+            volume="total_surgical_volume",
+            city="provider_city",
+            state="provider_state",
+            hospital="hospital_affiliation",
+        ),
+        medicare_schema=MedicareSchema(
+            npi="Rndrng_NPI",
+            first_name="Rndrng_Prvdr_First_Name",
+            last_name="Rndrng_Prvdr_Last_Org_Name",
+            specialty="Rndrng_Prvdr_Type",
+            city="Rndrng_Prvdr_City",
+            state="Rndrng_Prvdr_State_Abrvtn",
+            cpt_code="HCPCS_Cd",
+            billed_volume="Tot_Srvcs",
+            hospital=None,
+        ),
+        min_intervention_volume=dyad_min_intervention_volume,
+    )
+    outputs = write_outputs(scored, top_targets, dyad_ledger, source_paths.output_dir)
+    return top_targets, dyad_ledger, outputs
 
 
 def main() -> None:
     args = parse_args()
     configure_logging(args.verbose)
     source_paths = build_source_paths(args)
-    top_targets, outputs = run_pipeline(
+    top_targets, dyad_ledger, outputs = run_pipeline(
         source_paths=source_paths,
         top_n=args.top_n,
         weights=ScoringWeights(),
+        dyad_min_intervention_volume=args.dyad_min_intervention_volume,
     )
     LOGGER.info("Pipeline complete. Generated %s ranked targets.", len(top_targets))
+    LOGGER.info("Generated %s dyad rows.", len(dyad_ledger))
     LOGGER.info("Outputs: %s", outputs)
 
 

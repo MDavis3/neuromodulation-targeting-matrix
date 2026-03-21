@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 
 DEFAULT_DYAD_LEDGER = PROCESSED_DIR / "clinical_dyad_ledger.csv"
-DEFAULT_PATIENT_DENSITY = PROJECT_ROOT / "medicare_patient_density.csv"
+DEFAULT_PATIENT_DENSITY = PROCESSED_DIR / "medicare_patient_density.csv"
 
 
 @dataclass(frozen=True)

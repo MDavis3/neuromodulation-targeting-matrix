@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local env files
+.env
+.env.*
+venv/
+.venv/
+env/
+ENV/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Data and generated artifacts
+*.csv
+*.parquet
+*.xlsx
+*.png
+*.jpg
+*.jpeg
+*.pdf
+
+# Local data directories
+data/
+
+# Sensitive internal docs and scratch notes
+Strategicbriefing.md
+DATA_INVENTORY.md
+

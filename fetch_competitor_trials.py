@@ -16,7 +16,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 DEFAULT_OUTPUT_PATH = PROCESSED_DIR / "competitor_neuromodulation_trials.csv"
 CTG_BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
-TARGET_SPONSOR_QUERY = "(Medtronic OR Abbott)"
+TARGET_SPONSOR_NAMES = (
+    "medtronic",
+    "abbott",
+    "boston scientific",
+    "livanova",
+    "neuropace",
+)
+TARGET_SPONSOR_QUERY = "(" + " OR ".join(name.title() for name in TARGET_SPONSOR_NAMES) + ")"
 ACTIVE_STATUSES = {
     "RECRUITING",
     "ACTIVE_NOT_RECRUITING",
@@ -43,7 +50,6 @@ NEUROMODULATION_KEYWORDS = (
     "peripheral nerve",
     "tms",
 )
-TARGET_SPONSOR_NAMES = ("medtronic", "abbott")
 US_STATE_NAME_TO_ABBR = {
     "Alabama": "AL",
     "Alaska": "AK",
